@@ -79,7 +79,7 @@ Reset_Handler		PROC
 	BL GPIO_ClockInit
 	BL GPIO_init
 
-;; Cycling LEDS until button is pressed
+;; Cycling LEDS until button is pressed (no touch r2, r3!!!)
 reload_leds	
 	ldr r0, =GPIOA_ODR
 	mov r1, #0x0200
@@ -89,18 +89,45 @@ reload_leds
 	ldr r2, =DELAYTIME
 	ldr r3, =4
 waiting_for_player
+;; Check if user has pressed a button 
+	ldr r0, =GPIOB_IDR ; PB8 and PB9
+	ldr r1, [r0] 
+	and r1, #0x0300 ; Bit pattern (source) 0000 0300 (0100 PB8 and 0200 PB9)
+	ldr r0, =GPIOC_IDR ; PC12
+	ldr r4, [r0]
+	and r4, #0x1000 ; Bit pattern (source) 0000 1000 (1000 PC12)
+	ldr r0, =GPIOA_IDR ; PA5
+	ldr r5, [r0]
+	and r5, #0x0020 ; Bit pattern (source) 0000 0020 (0020 PA5)
+	
+	;; Splice together bit patterns for buttons
+	orr r4, r4, r5
+	orr r1, r1, r4
+	cmp r1, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
+	bne normal_gameplay
+	
+	;; If DELAYTIME has not expried, keep the LED on
 	subs r2, #1
 	bne waiting_for_player
 	
 	ldr r0, =GPIOA_ODR
 	ldr r1, [r0]
-	lsl r1, #1
+	lsl r1, #1 ; Shift pattern to turn on next LED
 	str r1, [r0]
 	
+	;; If the 4th LED was just on, turn on the 1st LED
 	subs r3, #1
 	beq reload_leds
+	
 	ldr r2, =DELAYTIME
 	b waiting_for_player
+	
+normal_gameplay
+	ldr r0, =GPIOA_ODR
+	mov r1, #0x0
+	mvn r1, r1
+	str r1, [r0]
+	b normal_gameplay
 	
 	ENDP
 
