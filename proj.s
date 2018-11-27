@@ -38,7 +38,6 @@ GPIOC_BSRR	EQU		0x40011010	; (0x10) Port Bit Set/Reset Register
 GPIOC_BRR	EQU		0x40011014	; (0x14) Port Bit Reset Register
 GPIOC_LCKR	EQU		0x40011018	; (0x18) Port Configuration Lock Register
 
-;Registers for configuring and enabling the clocks
 ;RCC Registers - Base Addr: 0x40021000
 RCC_CR		EQU		0x40021000	; Clock Control Register
 RCC_CFGR	EQU		0x40021004	; Clock Configuration Register
@@ -46,44 +45,41 @@ RCC_CIR		EQU		0x40021008	; Clock Interrupt Register
 RCC_APB2RSTR	EQU	0x4002100C	; APB2 Peripheral Reset Register
 RCC_APB1RSTR	EQU	0x40021010	; APB1 Peripheral Reset Register
 RCC_AHBENR	EQU		0x40021014	; AHB Peripheral Clock Enable Register
-
-RCC_APB2ENR	EQU		0x40021018	; APB2 Peripheral Clock Enable Register  -- Used
-
+RCC_APB2ENR	EQU		0x40021018	; APB2 Peripheral Clock Enable Register
 RCC_APB1ENR	EQU		0x4002101C	; APB1 Peripheral Clock Enable Register
 RCC_BDCR	EQU		0x40021020	; Backup Domain Control Register
 RCC_CSR		EQU		0x40021024	; Control/Status Register
 RCC_CFGR2	EQU		0x4002102C	; Clock Configuration Register 2
 
-; RTC Registers - Base Addr: 0x40002800
-RTC_CNTL	EQU		0x4000281C	; RTC Counter Low
+;Constants for RNG routine
+A			EQU 	0x19660D	;
+C			EQU     0x3C6EF35F	;
 
-; Times for delay routines
-DELAY_TIME  	EQU     160000
-PRELIM_WAIT		EQU		1600000
-REACT_TIME		EQU		1600000000
-NUM_CYCLES		EQU		16
-WINNING_SIGNAL_TIME	EQU 16000000
-LOSING_SIGNAL_TIME	EQU 16000000
-	
-; Constants for RNG routine
-A			EQU 	0x19660D
-C			EQU     0x3C6EF35F
+;Times for delays in routine
+DELAY_TIME  	EQU     160000		;
+PRELIM_WAIT		EQU		1600000		;
+REACT_TIME		EQU		1600000000	;
+NUM_CYCLES		EQU		16			;
+WINNING_SIGNAL_TIME	EQU 16000000	;
+LOSING_SIGNAL_TIME	EQU 16000000	;
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Vector Table Mapped to Address 0 at Reset
+;;; Vector Table Mapped to Address 0 at Reset
             AREA    RESET, Data, READONLY
             EXPORT  __Vectors
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-__Vectors	DCD		INITIAL_MSP			; stack pointer value when stack is empty
-        	DCD		Reset_Handler		; reset vector
+__Vectors	DCD		INITIAL_MSP			; Stack pointer value when stack is empty
+        	DCD		Reset_Handler		; Reset vector
 
             AREA    MYCODE, CODE, READONLY
 			EXPORT	Reset_Handler
 
 			ENTRY
 
-;;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Author: Kelly Holtzman
+;;; Mainline code
 
 Reset_Handler		PROC
 ;; Initialize I/O lines
@@ -92,10 +88,9 @@ Reset_Handler		PROC
 
 gameplay
 ;; Cycling LEDS until button is pressed (UC1)
-	bl waiting_for_player
+	bl Waiting_for_Player
 ;; Enter normal gameplay (UC2)
-	bl normal_gameplay
-	
+	bl Normal_Gameplay
 	b gameplay
 	
 	ENDP
@@ -103,171 +98,207 @@ gameplay
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Subroutines
 
-;This routine will enable the clock for the Ports that you need	
+;;; This routine will enable the clock for Ports A, B, and C
 	ALIGN
 GPIO_ClockInit PROC
+	; ENEL 384 Pushbuttons: Button 1(Red): PB8, Button 2(Black): PB9, Button 3(Blue): PC12, Button 4(Green): PA5
+	; ENEL 384 board LEDs: LED 1 - PA9, LED 2 - PA10, LED 3 - PA11, LED 4 - PA12
 	push {r0, r1}
-	; Registers   .. RCC_APB2ENR
-	; ENEL 384 Pushbuttons: SW2(Red): PB8, SW3(Black): PB9, SW4(Blue): PC12 SW5(Green): PA5
-	; ENEL 384 board LEDs: D1 - PA9, D2 - PA10, D3 - PA11, D4 - PA12
-	ldr r0, =RCC_APB2ENR ; LEDS & SW
-	mov r1, #0x001C ; Bit pattern 0000 001C -> IOPA at bit 2, IOPB at bit 3, IOPC at bit 4
+	ldr r0, =RCC_APB2ENR
+	mov r1, #0x001C ; Bit pattern 0000 001C for PA, PB, PC enable
 	str r1, [r0]
-	
 	pop {r0, r1}
+
 	BX LR
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;This routine enables the GPIO for the LED's.  By default the I/O lines are input so we only need to configure for ouptut.
+;;; This routine enables the GPIO for the LEDs.  
+;;; By default the I/O lines are input. Only Port A is configured for ouptut.
 	ALIGN
 GPIO_init  PROC
+	; ENEL 384 board LEDs: LED 1 - PA9, LED 2 - PA10, LED 3 - PA11, LED 4 - PA12
 	push {r0, r1}
-	; ENEL 384 board LEDs: D1 - PA9, D2 - PA10, D3 - PA11, D4 - PA12
-	ldr r0, =GPIOA_CRH ; LEDS
-	ldr r1, =0x00033330 ; Bit pattern 0003 3330 -> CRH ports 9-12 with below pattern
-						; Output mode, GP output push-pull (00) & max speed 50MHz (11) [0011=3]
+	ldr r0, =GPIOA_CRH
+	ldr r1, =0x00033330 ; Bit pattern 0003 3330, CRH pins 9-12 with below pattern
+						; Output mode, GP output push-pull (00) & max speed 50MHz (11)
 	str r1, [r0]
-
 	pop {r0, r1}
+
     BX LR
 	ENDP
 		
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;This routine waits for the player
+;;; This routine waits for the player to start the game
 	ALIGN
-waiting_for_player PROC
+Waiting_for_Player PROC
 	push {lr, r0, r1, r3}
 	
+;; The following loops cycle the leds back and forth
+;; by shifting the bits in the GPIOA_ODR left or right by one bit.
+;; This depends on the last LED that was on.
+
 cycling_prep_forwards
 	mov r1, #0x0200 ; Pattern for LED 1
-	bl turn_on_led
+	bl Set_LED_Output
 	ldr r2, =DELAY_TIME
-	ldr r3, =3 ; LED count
+	ldr r3, =3 ; LED count per cycle
 	
 cycle_forwards
-	bl get_btn_bits
-	cmp r0, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
+	; Check if user has pressed a button, if a button is pressed start gameplay
+	bl Get_Button_Input ; Returns the button pattern in r0
+	cmp r0, #0x1320 	; Bit pattern when no button is pressed is 0000 1320
 	bne start_gameplay
 	
-	;; If DELAYTIME has not expried, keep the LED on
+	; If DELAYTIME has not expried, keep the LED on
 	subs r2, #1
 	bne cycle_forwards
 	
+	; Shift pattern left to turn on next forward LED
 	ldr r0, =GPIOA_ODR
 	ldr r1, [r0]
-	lsl r1, #1 ; Shift pattern to turn on next forward LED
+	lsl r1, #1
 	str r1, [r0]
 	
-	;; If the 4th LED was just on, cycle backwards
+	; If the 4th LED was just on, cycle backwards
 	subs r3, #1
 	beq cycling_prep_backwards
-	
+	; Else, continue cycling forwards
 	ldr r2, =DELAY_TIME
 	b cycle_forwards
 	
 cycling_prep_backwards
 	ldr r2, =DELAY_TIME
-	ldr r3, =3 ; LED count
+	ldr r3, =3 ; LED count per cycle
 
 cycle_backwards
-	bl get_btn_bits
-	cmp r0, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
+	; Check if user has pressed a button, if a button is pressed start gameplay
+	bl Get_Button_Input  ; Returns the button pattern in r0
+	cmp r0, #0x1320 	 ; Bit pattern when no button is pressed is 0000 1320
 	bne start_gameplay
 	
-	;; If DELAYTIME has not expried, keep the LED on
+	; If DELAYTIME has not expried, keep the LED on
 	subs r2, #1
 	bne cycle_backwards
 	
+	; Shift pattern right to turn on previous/backwards LED
 	ldr r0, =GPIOA_ODR
 	ldr r1, [r0]
-	lsr r1, #1 ; Shift pattern to turn on next backwards LED
+	lsr r1, #1
 	str r1, [r0]
 	
-	;; If the 1st LED was just on, cycle forwards
+	; If the 1st LED was just on, cycle forwards
 	subs r3, #1
 	beq cycling_prep_forwards
-	
+	; Else, continue cycling backwards
 	ldr r2, =DELAY_TIME
 	b cycle_backwards
 	
 start_gameplay
+	; Turn off LEDs to signal the end of Waiting for Player
 	mov r1, #0x0
-	bl turn_on_led
+	bl Set_LED_Output
+
 	pop {lr, r0, r1, r3}
 	BX LR
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
+;;; This routine controls normal gameplay
 	ALIGN
-normal_gameplay PROC
+Normal_Gameplay PROC
 	push {lr, r0, r1, r2, r3}
-	bl seed_rng
+
+;; Set up the current game by seeding the RNG, the number of cycles, and starting reaction time
+	bl Seed_RNG
 	ldr r11, =NUM_CYCLES
-start_round
-	ldr r4, =PRELIM_WAIT
-	bl wait
-	bl rng ; R9 now has led num
-	
-	; turn on led
-	; get btn pattern
-	cmp r9, #0
-	moveq r1, #0x0200
-	moveq r2, #0x1220
-	cmp r9, #1
-	moveq r1, #0x0400
-	moveq r2, #0x1120
-	cmp r9, #2
-	moveq r1, #0x0800
-	moveq r2, #0x0320
-	cmp r9, #3
-	moveq r1, #0x1000
-	moveq r2, #0x1300
-	
-	bl turn_on_led
 	ldr r3, =REACT_TIME
 	
+start_round
+	; The fixed wait time PRELIM_WAIT elapses
+	ldr r4, =PRELIM_WAIT
+	bl Wait
+
+	; RNG the LED to turn on
+	bl RNG ; Returns the LED in r9
+	
+	; Based on the chosen LED, set the LED pattern and expected Button Input pattern
+	cmp r9, #0
+	moveq r1, #0x0200 ; Output pattern for LED 1
+	moveq r2, #0x1220 ; Input pattern for Button 1
+	cmp r9, #1
+	moveq r1, #0x0400 ; Output pattern for LED 2
+	moveq r2, #0x1120 ; Input pattern for Button 2
+	cmp r9, #2
+	moveq r1, #0x0800 ; Output pattern for LED 3
+	moveq r2, #0x0320 ; Input pattern for Button 3
+	cmp r9, #3
+	moveq r1, #0x1000 ; Output pattern for LED 4
+	moveq r2, #0x1300 ; Input pattern for Button 4
+	
+	; Turn on the chosen LED
+	bl Set_LED_Output
+	; Save the current reaction time
+	push {r3}
+
+;; Wait for the player to press the corresponding button to the chose LED
 reaction_time
+	; When the reaction time is up, the user has failed
 	cmp r3, #0
-	beq kill
-	bl get_btn_bits
+	beq failed_reaction
+
+	; Check if user has pressed a button
+	; If no button is pressed, continue waiting
+	bl Get_Button_Input
 	cmp r0, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
 	subeq r3, #1000
 	beq reaction_time
-	cmp r0, r2 ; Bit pattern when red button pressed is 0000 1220
-	beq good
-	bne kill
+	
+	; Else, the user must have pressed a button
+	cmp r0, r2
+	beq good_reaction	; If the pattern matches, the user has pressed the correct button
+	bne failed_reaction ; If not, the user has pressed more than one button or the wrong button
 
-good
+good_reaction
+	; Turn off LEDs to signal the round is over
 	mov r1, #0x0
-	bl turn_on_led
+	bl Set_LED_Output
+
+	; Reduce the reaction time for the next cycle
+	pop {r3}
+	sub r3, #1000
+
+	; Update the score and the number of cycles completed
 	add r12, #1
 	subs r11, #1
-	bne start_round
-	bl end_success
+	bne start_round ; If there are still more cycles, start the next round
+	
+	bl end_success  ; Else, end the game in success
 	
 	pop {lr, r0, r1, r2, r3}
 	BX LR
 
-kill
+failed_reaction
+	; Turn off LEDs to signal the round is over
 	mov r1, #0x0
-	bl turn_on_led
+	bl Set_LED_Output
+
+	; Remove r3 from the stack, no longer need to reduce reaction time
+	pop {r3}
+
+	; Update the number of cycles completed
 	subs r11, #1
-	bl end_failure
+	bl end_failure ; End the game in failure
 
 	pop {lr, r0, r1, r2, r3}
 	BX LR
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;This routine grabs the button bits
+;;; This routine collects the present input on the buttons 
 	ALIGN
-get_btn_bits  PROC
-;; ENEL 384 Pushbuttons: SW2(Red): PB8, SW3(Black): PB9, SW4(Blue): PC12 SW5(Green): PA5
+Get_Button_Input  PROC
+	; ENEL 384 Pushbuttons: Button 1(Red): PB8, Button 2(Black): PB9, Button 3(Blue): PC12, Button 4(Green): PA5
 	push {r1, r2, r3}
 	ldr r0, =GPIOB_IDR ; PB8 and PB9
 	ldr r1, [r0] 
@@ -283,20 +314,18 @@ get_btn_bits  PROC
 	orr r2, r2, r3
 	orr r1, r1, r2
 	mov r0, r1
-	pop {r1, r2, r3}
-	; "return" value in r0
 
+	pop {r1, r2, r3}
     BX LR
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;This routine will turn on an led, pattern passed in r1
+;;; This routine will turn on an LED
 	ALIGN
-turn_on_led PROC
+Set_LED_Output PROC
 	push {r0, r1}
 	ldr r0, =GPIOA_ODR
-	mvn r1, r1
+	mvn r1, r1 ; As the LEDs are active-LOW, the active-HIGH pattern expected is flipped
 	str r1, [r0]
 	
 	pop {r0, r1}
@@ -304,43 +333,43 @@ turn_on_led PROC
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;This routine will RNG
+;;; This routine will generate a psuedo-random number
 	ALIGN
-rng PROC
+RNG PROC
+;; Using the formula (X*a+c)
 	push {r0, r1}
 	ldr r0, =A
 	ldr r1, =C
 	mul r10, r0
 	add r10, r1
 	
-	; Grab upper 2 bits for random LED
+	; Select upper 2 bits for pseudo-random LED
 	ldr r0, =0xC0000000
 	and r9, r10, r0
-	lsr r9, #30
+	lsr r9, #30 ; Shift so as to read the 2 bits as 00(0), 01(1), 10(2), or 11(3)
 	
 	pop {r0, r1}
 	BX LR
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;This routine will grab counter bits
+;;; This routine will use user input (pressing a button while waiting for player)
+;;; to seed the RNG
 	ALIGN
-seed_rng PROC
+Seed_RNG PROC
 	push {r0}
 	mov r10, r2
-	
+
 	pop {r0}
 	BX LR
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;This routine will wait
+;;; This routine will wait for a passed amount of cycles in r4
 	ALIGN
-wait PROC
+Wait PROC
 	push {r4}
+
 wait_loop
 	subs r4, #1
 	bne wait_loop
@@ -350,31 +379,29 @@ wait_loop
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;This routine will end succ
+;;; This routine will signal a successful end
 	ALIGN
 end_success PROC
 	push {lr}
 	mov r1, #0x1E00 ; all led on
-	bl turn_on_led
+	bl Set_LED_Output
 	ldr r4, =WINNING_SIGNAL_TIME
-	bl wait
+	bl Wait
 	mov r1, #0x0 ; all led off
-	bl turn_on_led
+	bl Set_LED_Output
 	pop {lr}
 	BX LR
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;This routine will end fail
+;;; This routine will signal a failed end
 	ALIGN
 end_failure PROC
 	push {lr}
 	mov r1, #0x0 ; all led off
-	bl turn_on_led
+	bl Set_LED_Output
 	ldr r4, =LOSING_SIGNAL_TIME
-	bl wait
+	bl Wait
 	pop {lr}
 	BX LR
 	ENDP
