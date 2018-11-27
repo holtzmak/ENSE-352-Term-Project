@@ -29,7 +29,6 @@ GPIOB_BSRR	EQU		0x40010C10	; (0x10) Port Bit Set/Reset Register
 GPIOB_BRR	EQU		0x40010C14	; (0x14) Port Bit Reset Register
 GPIOB_LCKR	EQU		0x40010C18	; (0x18) Port Configuration Lock Register
 
-;The onboard LEDS are on port C bits 8 and 9
 ;PORT C GPIO - Base Addr: 0x40011000
 GPIOC_CRL	EQU		0x40011000	; (0x00) Port Configuration Register for Px7 -> Px0
 GPIOC_CRH	EQU		0x40011004	; (0x04) Port Configuration Register for Px15 -> Px8
@@ -55,9 +54,17 @@ RCC_BDCR	EQU		0x40021020	; Backup Domain Control Register
 RCC_CSR		EQU		0x40021024	; Control/Status Register
 RCC_CFGR2	EQU		0x4002102C	; Clock Configuration Register 2
 
+; RTC Registers - Base Addr: 0x40002800
+RTC_CNTL	EQU		0x4000281C	; RTC Counter Low
+
 ; Times for delay routines
 ;DELAYTIME	EQU		1600000		; (200 ms/24MHz PLL)
 DELAYTIME	EQU		160000		;
+OTHER_DELAY	EQU		16000000		;
+	
+; Constants for RNG routine
+A			EQU 	0x19660D
+C			EQU     0x3C6EF35F
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Vector Table Mapped to Address 0 at Reset
             AREA    RESET, Data, READONLY
@@ -80,16 +87,70 @@ Reset_Handler		PROC
 	bl GPIO_ClockInit
 	bl GPIO_init
 
+gameplay
 ;; Cycling LEDS until button is pressed (UC1)
-waiting_for_player
-	bl turn_on_led_1 ; Starting LED
+	bl waiting_for_player
+;; Seed RNG 
+	bl seed_rng
+;; Enter normal gameplay (UC2)
+	bl normal_gameplay
+
+done
+	b done
+	
+	ENDP
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Subroutines
+
+;This routine will enable the clock for the Ports that you need	
+	ALIGN
+GPIO_ClockInit PROC
+	push {r0, r1}
+	; Registers   .. RCC_APB2ENR
+	; ENEL 384 Pushbuttons: SW2(Red): PB8, SW3(Black): PB9, SW4(Blue): PC12 SW5(Green): PA5
+	; ENEL 384 board LEDs: D1 - PA9, D2 - PA10, D3 - PA11, D4 - PA12
+	ldr r0, =RCC_APB2ENR ; LEDS & SW
+	mov r1, #0x001C ; Bit pattern 0000 001C -> IOPA at bit 2, IOPB at bit 3, IOPC at bit 4
+	str r1, [r0]
+	
+	pop {r0, r1}
+	BX LR
+	ENDP
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;This routine enables the GPIO for the LED's.  By default the I/O lines are input so we only need to configure for ouptut.
+	ALIGN
+GPIO_init  PROC
+	push {r0, r1}
+	; ENEL 384 board LEDs: D1 - PA9, D2 - PA10, D3 - PA11, D4 - PA12
+	ldr r0, =GPIOA_CRH ; LEDS
+	ldr r1, =0x00033330 ; Bit pattern 0003 3330 -> CRH ports 9-12 with below pattern
+						; Output mode, GP output push-pull (00) & max speed 50MHz (11) [0011=3]
+	str r1, [r0]
+
+	pop {r0, r1}
+    BX LR
+	ENDP
+		
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;This routine waits for the player
+	ALIGN
+waiting_for_player PROC
+	push {lr, r0-r3}
+	
+cycling_prep_forwards
+	mov r1, #0x0200 ; Pattern for LED 1
+	bl turn_on_led
 	ldr r2, =DELAYTIME
 	ldr r3, =3 ; LED count
 	
 cycle_forwards
 	bl get_btn_bits
-	cmp r1, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
-	bne normal_gameplay
+	cmp r0, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
+	bne start_gameplay
 	
 	;; If DELAYTIME has not expried, keep the LED on
 	subs r2, #1
@@ -102,19 +163,19 @@ cycle_forwards
 	
 	;; If the 4th LED was just on, cycle backwards
 	subs r3, #1
-	beq cycling_prep
+	beq cycling_prep_backwards
 	
 	ldr r2, =DELAYTIME
 	b cycle_forwards
 	
-cycling_prep
+cycling_prep_backwards
 	ldr r2, =DELAYTIME
 	ldr r3, =3 ; LED count
 
 cycle_backwards
 	bl get_btn_bits
-	cmp r1, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
-	bne normal_gameplay
+	cmp r0, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
+	bne start_gameplay
 	
 	;; If DELAYTIME has not expried, keep the LED on
 	subs r2, #1
@@ -127,29 +188,47 @@ cycle_backwards
 	
 	;; If the 1st LED was just on, cycle forwards
 	subs r3, #1
-	beq waiting_for_player
+	beq cycling_prep_forwards
 	
 	ldr r2, =DELAYTIME
 	b cycle_backwards
 	
-normal_gameplay
-	ldr r2, =DELAYTIME
+start_gameplay
+	pop {lr, r0-r3}
+	BX LR
+	ENDP
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+	ALIGN
+normal_gameplay PROC
+	push {lr}
+	bl wait
+start_round
+	bl rng ; R9 now has led num
 	
-delay_that_shit
-	subs r2, #1
-	bne delay_that_shit
+	; turn on led
+	; get btn pattern
+	cmp r9, #0
+	moveq r1, #0x0200
+	moveq r2, #0x1220
+	cmp r9, #1
+	moveq r1, #0x0400
+	moveq r2, #0x1120
+	cmp r9, #2
+	moveq r1, #0x0800
+	moveq r2, #0x0320
+	cmp r9, #3
+	moveq r1, #0x1000
+	moveq r2, #0x1300
 	
-	ldr r0, =GPIOA_ODR
-	mov r1, #0x0200 ; led 1 on
-	mvn r1, r1
-	str r1, [r0]
+	bl turn_on_led
 	
-	mov r6, #0x1220 ; Pattern for red btn
-test
+react_time
 	bl get_btn_bits
-	cmp r1, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
-	beq test
-	cmp r1, r6 ; Bit pattern when red button pressed is 0000 1220
+	cmp r0, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
+	beq react_time
+	cmp r0, r2 ; Bit pattern when red button pressed is 0000 1220
 	beq good
 	bne kill
 
@@ -166,37 +245,9 @@ kill
 	mvn r1, r1
 	str r1, [r0]
 	b kill
-	
-	ENDP
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Subroutines
-
-;This routine will enable the clock for the Ports that you need	
-	ALIGN
-GPIO_ClockInit PROC
-	; Registers   .. RCC_APB2ENR
-	; ENEL 384 Pushbuttons: SW2(Red): PB8, SW3(Black): PB9, SW4(Blue): PC12 SW5(Green): PA5
-	; ENEL 384 board LEDs: D1 - PA9, D2 - PA10, D3 - PA11, D4 - PA12
-	ldr r0, =RCC_APB2ENR ; LEDS & SW
-	mov r1, #0x001C ; Bit pattern 0000 001C -> IOPA at bit 2, IOPB at bit 3, IOPC at bit 4
-	str r1, [r0]
-	
+	pop {lr}
 	BX LR
-	ENDP
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;This routine enables the GPIO for the LED's.  By default the I/O lines are input so we only need to configure for ouptut.
-	ALIGN
-GPIO_init  PROC
-	; ENEL 384 board LEDs: D1 - PA9, D2 - PA10, D3 - PA11, D4 - PA12
-	ldr r0, =GPIOA_CRH ; LEDS
-	ldr r1, =0x00033330 ; Bit pattern 0003 3330 -> CRH ports 9-12 with below pattern
-						; Output mode, GP output push-pull (00) & max speed 50MHz (11) [0011=3]
-	str r1, [r0]
-
-    BX LR
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -205,33 +256,85 @@ GPIO_init  PROC
 	ALIGN
 get_btn_bits  PROC
 ;; ENEL 384 Pushbuttons: SW2(Red): PB8, SW3(Black): PB9, SW4(Blue): PC12 SW5(Green): PA5
+	push {r1, r2, r3}
 	ldr r0, =GPIOB_IDR ; PB8 and PB9
 	ldr r1, [r0] 
 	and r1, #0x0300 ; Bit pattern (source) 0000 0300 (0100 PB8 and 0200 PB9)
 	ldr r0, =GPIOC_IDR ; PC12
-	ldr r4, [r0]
-	and r4, #0x1000 ; Bit pattern (source) 0000 1000 (1000 PC12)
+	ldr r2, [r0]
+	and r2, #0x1000 ; Bit pattern (source) 0000 1000 (1000 PC12)
 	ldr r0, =GPIOA_IDR ; PA5
-	ldr r5, [r0]
-	and r5, #0x0020 ; Bit pattern (source) 0000 0020 (0020 PA5)
+	ldr r3, [r0]
+	and r3, #0x0020 ; Bit pattern (source) 0000 0020 (0020 PA5)
 	
 	;; Splice together bit patterns for buttons
-	orr r4, r4, r5
-	orr r1, r1, r4 ; "return" value in r1
+	orr r2, r2, r3
+	orr r1, r1, r2
+	mov r0, r1
+	pop {r1, r2, r3}
+	; "return" value in r0
 
     BX LR
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;This routine will turn on led_1	
+;This routine will turn on an led, pattern passed in r1
 	ALIGN
-turn_on_led_1 PROC
+turn_on_led PROC
+	push {r0, r1}
 	ldr r0, =GPIOA_ODR
-	mov r1, #0x0200
 	mvn r1, r1
 	str r1, [r0]
 	
+	pop {r0, r1}
+	BX LR
+	ENDP
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;This routine will RNG
+	ALIGN
+rng PROC
+	push {r0, r1}
+	ldr r0, =A
+	ldr r1, =C
+	mul r10, r0
+	add r10, r1
+	
+	; Grab upper 2 bits for random LED
+	ldr r0, =0xC0000000
+	and r9, r10, r0
+	lsr r9, #30
+	
+	pop {r0, r1}
+	BX LR
+	ENDP
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;This routine will grab counter bits
+	ALIGN
+seed_rng PROC
+	push {r0}
+	mov r10, r2
+	
+	pop {r0}
+	BX LR
+	ENDP
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;This routine will wait
+	ALIGN
+wait PROC
+	push {r2}
+	ldr r2, =OTHER_DELAY
+wait_loop
+	subs r2, #1
+	bne wait_loop
+	
+	pop {r2}
 	BX LR
 	ENDP
 
