@@ -58,9 +58,12 @@ RCC_CFGR2	EQU		0x4002102C	; Clock Configuration Register 2
 RTC_CNTL	EQU		0x4000281C	; RTC Counter Low
 
 ; Times for delay routines
-;DELAYTIME	EQU		1600000		; (200 ms/24MHz PLL)
-DELAYTIME	EQU		160000		;
-OTHER_DELAY	EQU		16000000		;
+DELAY_TIME  	EQU     160000
+PRELIM_WAIT		EQU		1600000
+REACT_TIME		EQU		1600000000
+NUM_CYCLES		EQU		16
+WINNING_SIGNAL_TIME	EQU 16000000
+LOSING_SIGNAL_TIME	EQU 16000000
 	
 ; Constants for RNG routine
 A			EQU 	0x19660D
@@ -90,13 +93,10 @@ Reset_Handler		PROC
 gameplay
 ;; Cycling LEDS until button is pressed (UC1)
 	bl waiting_for_player
-;; Seed RNG 
-	bl seed_rng
 ;; Enter normal gameplay (UC2)
 	bl normal_gameplay
-
-done
-	b done
+	
+	b gameplay
 	
 	ENDP
 
@@ -139,12 +139,12 @@ GPIO_init  PROC
 ;This routine waits for the player
 	ALIGN
 waiting_for_player PROC
-	push {lr, r0-r3}
+	push {lr, r0, r1, r3}
 	
 cycling_prep_forwards
 	mov r1, #0x0200 ; Pattern for LED 1
 	bl turn_on_led
-	ldr r2, =DELAYTIME
+	ldr r2, =DELAY_TIME
 	ldr r3, =3 ; LED count
 	
 cycle_forwards
@@ -165,11 +165,11 @@ cycle_forwards
 	subs r3, #1
 	beq cycling_prep_backwards
 	
-	ldr r2, =DELAYTIME
+	ldr r2, =DELAY_TIME
 	b cycle_forwards
 	
 cycling_prep_backwards
-	ldr r2, =DELAYTIME
+	ldr r2, =DELAY_TIME
 	ldr r3, =3 ; LED count
 
 cycle_backwards
@@ -190,11 +190,13 @@ cycle_backwards
 	subs r3, #1
 	beq cycling_prep_forwards
 	
-	ldr r2, =DELAYTIME
+	ldr r2, =DELAY_TIME
 	b cycle_backwards
 	
 start_gameplay
-	pop {lr, r0-r3}
+	mov r1, #0x0
+	bl turn_on_led
+	pop {lr, r0, r1, r3}
 	BX LR
 	ENDP
 
@@ -202,9 +204,12 @@ start_gameplay
 
 	ALIGN
 normal_gameplay PROC
-	push {lr}
-	bl wait
+	push {lr, r0, r1, r2, r3}
+	bl seed_rng
+	ldr r11, =NUM_CYCLES
 start_round
+	ldr r4, =PRELIM_WAIT
+	bl wait
 	bl rng ; R9 now has led num
 	
 	; turn on led
@@ -223,30 +228,37 @@ start_round
 	moveq r2, #0x1300
 	
 	bl turn_on_led
+	ldr r3, =REACT_TIME
 	
-react_time
+reaction_time
+	cmp r3, #0
+	beq kill
 	bl get_btn_bits
 	cmp r0, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
-	beq react_time
+	subeq r3, #1000
+	beq reaction_time
 	cmp r0, r2 ; Bit pattern when red button pressed is 0000 1220
 	beq good
 	bne kill
 
 good
-	ldr r0, =GPIOA_ODR
-	mov r1, #0x1E00 ; all led on
-	mvn r1, r1
-	str r1, [r0]
-	b good
+	mov r1, #0x0
+	bl turn_on_led
+	add r12, #1
+	subs r11, #1
+	bne start_round
+	bl end_success
+	
+	pop {lr, r0, r1, r2, r3}
+	BX LR
 
 kill
-	ldr r0, =GPIOA_ODR
-	mov r1, #0x0 ; no led on
-	mvn r1, r1
-	str r1, [r0]
-	b kill
+	mov r1, #0x0
+	bl turn_on_led
+	subs r11, #1
+	bl end_failure
 
-	pop {lr}
+	pop {lr, r0, r1, r2, r3}
 	BX LR
 	ENDP
 
@@ -328,13 +340,42 @@ seed_rng PROC
 ;This routine will wait
 	ALIGN
 wait PROC
-	push {r2}
-	ldr r2, =OTHER_DELAY
+	push {r4}
 wait_loop
-	subs r2, #1
+	subs r4, #1
 	bne wait_loop
 	
-	pop {r2}
+	pop {r4}
+	BX LR
+	ENDP
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;This routine will end succ
+	ALIGN
+end_success PROC
+	push {lr}
+	mov r1, #0x1E00 ; all led on
+	bl turn_on_led
+	ldr r4, =WINNING_SIGNAL_TIME
+	bl wait
+	mov r1, #0x0 ; all led off
+	bl turn_on_led
+	pop {lr}
+	BX LR
+	ENDP
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;This routine will end fail
+	ALIGN
+end_failure PROC
+	push {lr}
+	mov r1, #0x0 ; all led off
+	bl turn_on_led
+	ldr r4, =LOSING_SIGNAL_TIME
+	bl wait
+	pop {lr}
 	BX LR
 	ENDP
 
