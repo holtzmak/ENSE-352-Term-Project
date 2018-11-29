@@ -58,7 +58,7 @@ C			EQU     0x3C6EF35F	;
 ;Times for delays in routine
 DELAY_TIME  	EQU     160000		;
 PRELIM_WAIT		EQU		1600000		;
-REACT_TIME		EQU		1600000000	;
+REACT_TIME		EQU		0xFF000000	;
 NUM_CYCLES		EQU		16			;
 WINNING_SIGNAL_TIME	EQU 16000000	;
 LOSING_SIGNAL_TIME	EQU 16000000	;
@@ -154,7 +154,7 @@ cycle_forwards
 	subs r2, #1
 	bne cycle_forwards
 	
-	; Shift pattern left to turn on next forward LED
+	; When DELAYTIME is up, shift pattern left to turn on next forward LED
 	ldr r0, =GPIOA_ODR
 	ldr r1, [r0]
 	lsl r1, #1
@@ -209,33 +209,20 @@ start_gameplay
 Normal_Gameplay PROC
 	push {lr, r0, r1, r2, r3}
 
-;; Set up the current game by seeding the RNG, the number of cycles, and starting reaction time
+;; Set up the current game by seeding the RNG, the number of cycles, score, and starting reaction time
 	bl Seed_RNG
 	ldr r11, =NUM_CYCLES
+	mov r12, #0 ; Score
 	ldr r3, =REACT_TIME
 	
 start_round
 	; The fixed wait time PRELIM_WAIT elapses
 	ldr r4, =PRELIM_WAIT
 	bl Wait
-
 	; RNG the LED to turn on
 	bl RNG ; Returns the LED in r9
-	
-	; Based on the chosen LED, set the LED pattern and expected Button Input pattern
-	cmp r9, #0
-	moveq r1, #0x0200 ; Output pattern for LED 1
-	moveq r2, #0x1220 ; Input pattern for Button 1
-	cmp r9, #1
-	moveq r1, #0x0400 ; Output pattern for LED 2
-	moveq r2, #0x1120 ; Input pattern for Button 2
-	cmp r9, #2
-	moveq r1, #0x0800 ; Output pattern for LED 3
-	moveq r2, #0x0320 ; Input pattern for Button 3
-	cmp r9, #3
-	moveq r1, #0x1000 ; Output pattern for LED 4
-	moveq r2, #0x1300 ; Input pattern for Button 4
-	
+	; Select the chosen LED and corresponding button
+	bl Select_LED
 	; Turn on the chosen LED
 	bl Set_LED_Output
 	; Save the current reaction time
@@ -251,10 +238,10 @@ reaction_time
 	; If no button is pressed, continue waiting
 	bl Get_Button_Input
 	cmp r0, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
-	subeq r3, #1000
+	sub r3, #1
 	beq reaction_time
 	
-	; Else, the user must have pressed a button
+;; Else, the user must have pressed a button
 	cmp r0, r2
 	beq good_reaction	; If the pattern matches, the user has pressed the correct button
 	bne failed_reaction ; If not, the user has pressed more than one button or the wrong button
@@ -266,14 +253,19 @@ good_reaction
 
 	; Reduce the reaction time for the next cycle
 	pop {r3}
-	sub r3, #1000
-
+		; Reduce reaction time
+	lsr r3, #1
+	;mov r0, #4
+	;udiv r0, r3, r0
+	;sub r3, r3, r0
+	
+	
 	; Update the score and the number of cycles completed
 	add r12, #1
 	subs r11, #1
 	bne start_round ; If there are still more cycles, start the next round
 	
-	bl end_success  ; Else, end the game in success
+	bl End_Success  ; Else, end the game in success
 	
 	pop {lr, r0, r1, r2, r3}
 	BX LR
@@ -288,7 +280,7 @@ failed_reaction
 
 	; Update the number of cycles completed
 	subs r11, #1
-	bl end_failure ; End the game in failure
+	bl End_Failure ; End the game in failure
 
 	pop {lr, r0, r1, r2, r3}
 	BX LR
@@ -331,6 +323,18 @@ Set_LED_Output PROC
 	pop {r0, r1}
 	BX LR
 	ENDP
+		
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; This routine will use user input (pressing a button while waiting for player)
+;;; to seed the RNG
+	ALIGN
+Seed_RNG PROC
+	push {r0}
+	mov r10, r2
+
+	pop {r0}
+	BX LR
+	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; This routine will generate a psuedo-random number
@@ -353,18 +357,6 @@ RNG PROC
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; This routine will use user input (pressing a button while waiting for player)
-;;; to seed the RNG
-	ALIGN
-Seed_RNG PROC
-	push {r0}
-	mov r10, r2
-
-	pop {r0}
-	BX LR
-	ENDP
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; This routine will wait for a passed amount of cycles in r4
 	ALIGN
 Wait PROC
@@ -377,11 +369,46 @@ wait_loop
 	pop {r4}
 	BX LR
 	ENDP
+		
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; This routine will use user input (pressing a button while waiting for player)
+;;; to seed the RNG
+	ALIGN
+Select_LED PROC
+	push {r0}
+	cmp r9, #3
+	bhi case_0
+	ldr r0, =Branch_Table
+	ldr pc,[r0,r9,lsl #2]
+	align 4
+	; Based on the chosen LED, set the LED pattern and expected Button Input pattern
+case_0 
+	mov r1, #0x0200 ; Output pattern for LED 1
+	mov r2, #0x1220 ; Input pattern for Button 1
+	pop {r0}
+	BX LR
+case_1
+	mov r1, #0x0400 ; Output pattern for LED 2
+	mov r2, #0x1120 ; Input pattern for Button 2
+	pop {r0}
+	BX LR
+case_2
+	mov r1, #0x0800 ; Output pattern for LED 3
+	mov r2, #0x0320 ; Input pattern for Button 3
+	pop {r0}
+	BX LR
+case_3
+	mov r1, #0x1000 ; Output pattern for LED 4
+	mov r2, #0x1300 ; Input pattern for Button 4
+	pop {r0}
+	BX LR
+	
+	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; This routine will signal a successful end
 	ALIGN
-end_success PROC
+End_Success PROC
 	push {lr}
 	mov r1, #0x1E00 ; all led on
 	bl Set_LED_Output
@@ -396,7 +423,7 @@ end_success PROC
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; This routine will signal a failed end
 	ALIGN
-end_failure PROC
+End_Failure PROC
 	push {lr}
 	mov r1, #0x0 ; all led off
 	bl Set_LED_Output
@@ -407,11 +434,20 @@ end_failure PROC
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
+;;; The following code is used for selecting the LED to turn on
 
 	ALIGN
+Branch_Table
+	DCD case_0
+	DCD case_1
+	DCD case_2
+	DCD case_3
+		
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-
+	ALIGN
+		
+		
 	END
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
