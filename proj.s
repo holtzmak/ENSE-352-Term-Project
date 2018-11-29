@@ -12,56 +12,37 @@
 INITIAL_MSP	EQU		0x20001000	; Initial Main Stack Pointer Value
 
 ;PORT A GPIO - Base Addr: 0x40010800
-GPIOA_CRL	EQU		0x40010800	; (0x00) Port Configuration Register for Px7 -> Px0
+;GPIOA_CRL	EQU		0x40010800	; (0x00) Port Configuration Register for Px7 -> Px0
 GPIOA_CRH	EQU		0x40010804	; (0x04) Port Configuration Register for Px15 -> Px8
 GPIOA_IDR	EQU		0x40010808	; (0x08) Port Input Data Register
 GPIOA_ODR	EQU		0x4001080C	; (0x0C) Port Output Data Register
-GPIOA_BSRR	EQU		0x40010810	; (0x10) Port Bit Set/Reset Register
-GPIOA_BRR	EQU		0x40010814	; (0x14) Port Bit Reset Register
-GPIOA_LCKR	EQU		0x40010818	; (0x18) Port Configuration Lock Register
 
 ;PORT B GPIO - Base Addr: 0x40010C00
-GPIOB_CRL	EQU		0x40010C00	; (0x00) Port Configuration Register for Px7 -> Px0
-GPIOB_CRH	EQU		0x40010C04	; (0x04) Port Configuration Register for Px15 -> Px8
+;GPIOB_CRL	EQU		0x40010C00	; (0x00) Port Configuration Register for Px7 -> Px0
+;GPIOB_CRH	EQU		0x40010C04	; (0x04) Port Configuration Register for Px15 -> Px8
 GPIOB_IDR	EQU		0x40010C08	; (0x08) Port Input Data Register
 GPIOB_ODR	EQU		0x40010C0C	; (0x0C) Port Output Data Register
-GPIOB_BSRR	EQU		0x40010C10	; (0x10) Port Bit Set/Reset Register
-GPIOB_BRR	EQU		0x40010C14	; (0x14) Port Bit Reset Register
-GPIOB_LCKR	EQU		0x40010C18	; (0x18) Port Configuration Lock Register
 
 ;PORT C GPIO - Base Addr: 0x40011000
-GPIOC_CRL	EQU		0x40011000	; (0x00) Port Configuration Register for Px7 -> Px0
-GPIOC_CRH	EQU		0x40011004	; (0x04) Port Configuration Register for Px15 -> Px8
+;GPIOC_CRL	EQU		0x40011000	; (0x00) Port Configuration Register for Px7 -> Px0
+;GPIOC_CRH	EQU		0x40011004	; (0x04) Port Configuration Register for Px15 -> Px8
 GPIOC_IDR	EQU		0x40011008	; (0x08) Port Input Data Register
 GPIOC_ODR	EQU		0x4001100C	; (0x0C) Port Output Data Register
-GPIOC_BSRR	EQU		0x40011010	; (0x10) Port Bit Set/Reset Register
-GPIOC_BRR	EQU		0x40011014	; (0x14) Port Bit Reset Register
-GPIOC_LCKR	EQU		0x40011018	; (0x18) Port Configuration Lock Register
 
 ;RCC Registers - Base Addr: 0x40021000
-RCC_CR		EQU		0x40021000	; Clock Control Register
-RCC_CFGR	EQU		0x40021004	; Clock Configuration Register
-RCC_CIR		EQU		0x40021008	; Clock Interrupt Register
-RCC_APB2RSTR	EQU	0x4002100C	; APB2 Peripheral Reset Register
-RCC_APB1RSTR	EQU	0x40021010	; APB1 Peripheral Reset Register
-RCC_AHBENR	EQU		0x40021014	; AHB Peripheral Clock Enable Register
 RCC_APB2ENR	EQU		0x40021018	; APB2 Peripheral Clock Enable Register
-RCC_APB1ENR	EQU		0x4002101C	; APB1 Peripheral Clock Enable Register
-RCC_BDCR	EQU		0x40021020	; Backup Domain Control Register
-RCC_CSR		EQU		0x40021024	; Control/Status Register
-RCC_CFGR2	EQU		0x4002102C	; Clock Configuration Register 2
 
 ;Constants for RNG routine
 A			EQU 	0x19660D	;
 C			EQU     0x3C6EF35F	;
 
 ;Times for delays in routine
-DELAY_TIME  	EQU     160000		;
-PRELIM_WAIT		EQU		1600000		;
-REACT_TIME		EQU		0xFF000000	;
-NUM_CYCLES		EQU		16			;
-WINNING_SIGNAL_TIME	EQU 16	;
-LOSING_SIGNAL_TIME	EQU 16000000	;
+DELAY_TIME  	EQU     0x27100		; Delay Time specific to cycling LEDs at approx 1Hz
+PRELIM_WAIT		EQU		0x186A00	;
+REACT_TIME		EQU		0x3FC00		;
+NUM_CYCLES		EQU		0x10		;
+WINNING_SIGNAL_TIME	EQU 0x20		;
+LOSING_SIGNAL_TIME	EQU 0x20		;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Vector Table Mapped to Address 0 at Reset
@@ -207,12 +188,12 @@ start_gameplay
 ;;; This routine controls normal gameplay
 	ALIGN
 Normal_Gameplay PROC
-	push {lr, r0, r1, r2, r3}
+	push {lr, r0, r1, r2, r3, r4}
 
 ;; Set up the current game by seeding the RNG, the number of cycles, score, and starting reaction time
 	bl Seed_RNG
 	ldr r11, =NUM_CYCLES
-	mov r12, #0 ; Score
+	mov r12, #0 ; Score starts at 0
 	ldr r3, =REACT_TIME
 	
 start_round
@@ -220,7 +201,7 @@ start_round
 	ldr r4, =PRELIM_WAIT
 	bl Wait
 	; RNG the LED to turn on
-	bl RNG ; Returns the LED in r9
+	bl RNG
 	; Select the chosen LED and corresponding button
 	bl Select_LED
 	; Turn on the chosen LED
@@ -230,15 +211,12 @@ start_round
 
 ;; Wait for the player to press the corresponding button to the chose LED
 reaction_time
-	; When the reaction time is up, the user has failed
-	cmp r3, #0
+	subs r3, #1
 	beq failed_reaction
-
 	; Check if user has pressed a button
 	; If no button is pressed, continue waiting
 	bl Get_Button_Input
 	cmp r0, #0x1320 ; Bit pattern when no button is pressed is 0000 1320
-	sub r3, #1
 	beq reaction_time
 	
 ;; Else, the user must have pressed a button
@@ -254,7 +232,9 @@ good_reaction
 	; Reduce the reaction time for the next cycle
 	pop {r3}
 	; Reduce reaction time
+	ldr r0, =0xFF00
 	lsr r3, #1
+	add r3, r3, r0 ; Always at least one sec to play, one sec with consumed clock cycles is approx 0xFF00
 	
 	; Update the score and the number of cycles completed
 	add r12, #1
@@ -263,7 +243,7 @@ good_reaction
 	
 	bl End_Success  ; Else, end the game in success
 	
-	pop {lr, r0, r1, r2, r3}
+	pop {lr, r0, r1, r2, r3, r4}
 	BX LR
 
 failed_reaction
@@ -278,7 +258,7 @@ failed_reaction
 	subs r11, #1
 	bl End_Failure ; End the game in failure
 
-	pop {lr, r0, r1, r2, r3}
+	pop {lr, r0, r1, r2, r3, r4}
 	BX LR
 	ENDP
 
@@ -325,11 +305,8 @@ Set_LED_Output PROC
 ;;; to seed the RNG
 	ALIGN
 Seed_RNG PROC
-	;push {r2}
-	;push {r0}
 	mov r10, r2
 
-	;pop {r0}
 	BX LR
 	ENDP
 
@@ -338,7 +315,6 @@ Seed_RNG PROC
 	ALIGN
 RNG PROC
 ;; Using the formula (X*a+c)
-	;pop {r10}
 	push {r0, r1}
 	ldr r0, =A
 	ldr r1, =C
@@ -408,31 +384,32 @@ case_3
 	ALIGN
 End_Success PROC
 	push {lr, r0, r1, r4}
-	;mov r1, #0x1E00 ; all led on
-	;bl Set_LED_Output
-	;ldr r4, =WINNING_SIGNAL_TIME
+
 	ldr r0, =WINNING_SIGNAL_TIME
-signal_win_1
+signal_win
 	mov r1, #0x0A00
 	bl Set_LED_Output
 	ldr r4, =DELAY_TIME
 	bl Wait
-	sub r0, #1
-	cmp r0, #0
+	
+	subs r0, #1
 	beq end_win
+	
 	mov r1, #0x1400
 	bl Set_LED_Output
 	ldr r4, =DELAY_TIME
 	bl Wait
-	sub r0, #1
-	cmp r0, #0
+	
+	subs r0, #1
 	beq end_win
-	b signal_win_1
+	b signal_win
 end_win
 	mov r1, #0x0 ; all led off
 	bl Set_LED_Output
+	
 	ldr r4, =PRELIM_WAIT
 	bl Wait
+	
 	pop {lr, r0, r1, r4}
 	BX LR
 	ENDP
@@ -441,12 +418,34 @@ end_win
 ;;; This routine will signal a failed end
 	ALIGN
 End_Failure PROC
-	push {lr}
+	push {lr, r0, r1, r4}
+	ldr r0, =LOSING_SIGNAL_TIME
+signal_fail
+	mov r1, #0x0A00
+	bl Set_LED_Output
+	ldr r4, =DELAY_TIME
+	bl Wait
+	
+	subs r0, #1
+	beq end_fail
+	
+	mov r1, #0x1400
+	bl Set_LED_Output
+	ldr r4, =DELAY_TIME
+	bl Wait
+	
+	subs r0, #1
+	beq end_fail
+	b signal_fail
+	
+end_fail
 	mov r1, #0x0 ; all led off
 	bl Set_LED_Output
-	ldr r4, =LOSING_SIGNAL_TIME
+	
+	ldr r4, =PRELIM_WAIT
 	bl Wait
-	pop {lr}
+	
+	pop {lr, r0, r1, r4}
 	BX LR
 	ENDP
 
