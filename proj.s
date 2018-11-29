@@ -60,7 +60,7 @@ DELAY_TIME  	EQU     160000		;
 PRELIM_WAIT		EQU		1600000		;
 REACT_TIME		EQU		0xFF000000	;
 NUM_CYCLES		EQU		16			;
-WINNING_SIGNAL_TIME	EQU 16000000	;
+WINNING_SIGNAL_TIME	EQU 16	;
 LOSING_SIGNAL_TIME	EQU 16000000	;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -253,12 +253,8 @@ good_reaction
 
 	; Reduce the reaction time for the next cycle
 	pop {r3}
-		; Reduce reaction time
+	; Reduce reaction time
 	lsr r3, #1
-	;mov r0, #4
-	;udiv r0, r3, r0
-	;sub r3, r3, r0
-	
 	
 	; Update the score and the number of cycles completed
 	add r12, #1
@@ -329,10 +325,11 @@ Set_LED_Output PROC
 ;;; to seed the RNG
 	ALIGN
 Seed_RNG PROC
-	push {r0}
+	;push {r2}
+	;push {r0}
 	mov r10, r2
 
-	pop {r0}
+	;pop {r0}
 	BX LR
 	ENDP
 
@@ -341,6 +338,7 @@ Seed_RNG PROC
 	ALIGN
 RNG PROC
 ;; Using the formula (X*a+c)
+	;pop {r10}
 	push {r0, r1}
 	ldr r0, =A
 	ldr r1, =C
@@ -409,14 +407,33 @@ case_3
 ;;; This routine will signal a successful end
 	ALIGN
 End_Success PROC
-	push {lr}
-	mov r1, #0x1E00 ; all led on
+	push {lr, r0, r1, r4}
+	;mov r1, #0x1E00 ; all led on
+	;bl Set_LED_Output
+	;ldr r4, =WINNING_SIGNAL_TIME
+	ldr r0, =WINNING_SIGNAL_TIME
+signal_win_1
+	mov r1, #0x0A00
 	bl Set_LED_Output
-	ldr r4, =WINNING_SIGNAL_TIME
+	ldr r4, =DELAY_TIME
 	bl Wait
+	sub r0, #1
+	cmp r0, #0
+	beq end_win
+	mov r1, #0x1400
+	bl Set_LED_Output
+	ldr r4, =DELAY_TIME
+	bl Wait
+	sub r0, #1
+	cmp r0, #0
+	beq end_win
+	b signal_win_1
+end_win
 	mov r1, #0x0 ; all led off
 	bl Set_LED_Output
-	pop {lr}
+	ldr r4, =PRELIM_WAIT
+	bl Wait
+	pop {lr, r0, r1, r4}
 	BX LR
 	ENDP
 
