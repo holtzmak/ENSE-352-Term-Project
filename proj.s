@@ -290,7 +290,7 @@ good_reaction
 	bne start_round ; If there are still more cycles, start the next round
 	bl End_Success
 	
-	pop {lr, r0, r1, r2, r3, r4}
+	pop {lr, r0, r1, r2, r3, r4, r11}
 	BX LR
 
 failed_reaction
@@ -450,10 +450,10 @@ wait_loop
 ;;; Signal End Success
 ;;; Requires:
 ;;;		WINNING_SIGNAL_TIME: The time to display the winning signal. Should be greater than 0.
-;;; 	DELAY_TIME: Predefined time to hold an LED. Any value, works best if approx. 0x27100.
+;;; 	REACT_TIME: Predefined time to hold the LED. Works best if approx. 0x3FC00.
 ;;;		PRELIM_WAIT: The predefined wait time between rounds/games.
 ;;; Promise:
-;;; 	Will cycle a 'twinkling' LED pattern (alike arcade machines) at approx. 1Hz if DELAY_TIME is 0x27100
+;;; 	Will cycle a 'twinkling' LED pattern (alike arcade machines) at approx. 1Hz,
 ;;;		for WINNING_SIGNAL_TIME.
 ;;;	Modifies:
 ;;;		Subroutine does not modify any registers.
@@ -467,7 +467,7 @@ signal_win
 	;; Light up 2 LEDs for the twinkling pattern and hold
 	mov r1, #0x0A00
 	bl Set_LED_Output
-	ldr r4, =DELAY_TIME
+	ldr r4, =REACT_TIME
 	bl Wait
 	
 	;; Reduce the WINNING_SIGNAL_TIME
@@ -477,7 +477,7 @@ signal_win
 	;; Light up 2 LEDs for the twinkling pattern and hold
 	mov r1, #0x1400
 	bl Set_LED_Output
-	ldr r4, =DELAY_TIME
+	ldr r4, =REACT_TIME
 	bl Wait
 	
 	;; Reduce the WINNING_SIGNAL_TIME
@@ -501,7 +501,7 @@ end_win
 ;;; Signal End Failure
 ;;; Requires:
 ;;;		LOSING_SIGNAL_TIME: The time to display the losing signal. Should be greater than 0.
-;;; 	DELAY_TIME: Predefined time to hold an LED. Any value, works best if approx. 0x27100.
+;;; 	REACT_TIME: Predefined time to hold the LED. Works best if approx. 0x3FC00.
 ;;;		PRELIM_WAIT: The predefined wait time between rounds/games.
 ;;; Promise:
 ;;; 	Will blink an LED pattern representing the binary value of the rounds completed before failure,
@@ -515,19 +515,23 @@ End_Failure PROC
 
 	ldr r0, =LOSING_SIGNAL_TIME
 signal_fail
-	mov r1, #0x0A00
+	;; Light up binary LED pattern for the player's score and hold
+	bl Select_LED_Binary
 	bl Set_LED_Output
-	ldr r4, =DELAY_TIME
+	ldr r4, =REACT_TIME
 	bl Wait
 	
+	;; Reduce the LOSING_SIGNAL_TIME
 	subs r0, #1
 	beq end_fail
 	
-	mov r1, #0x1400
+	;; Turn off LEDs and hold
+	mov r1, #0x0
 	bl Set_LED_Output
-	ldr r4, =DELAY_TIME
+	ldr r4, =REACT_TIME
 	bl Wait
 	
+	;; Reduce the LOSING_SIGNAL_TIME
 	subs r0, #1
 	beq end_fail
 	b signal_fail
@@ -565,9 +569,7 @@ Select_LED 	PROC
 	;; Starting at the base case, jump to the X case by formula: addr = (base_addr + X*4)
 	;; The cases are aligned by 4 bytes.
 	ldr r0, =Branch_Table_LEDs
-	lsl r9, #2
-	add r0, r0, r9
-	ldr pc,[r0]
+	ldr pc,[r0, r9, lsl #2]
 
 	ALIGN 4
 case_0 
@@ -616,9 +618,7 @@ Select_LED_Binary 	PROC
 	;; Starting at the base case, jump to the X case by formula: addr = (base_addr + X*4)
 	;; The cases are aligned by 4 bytes.
 	ldr r0, =Branch_Table_Binary
-	lsl r12, #2
-	add r0, r0, r12
-	ldr pc,[r0]
+	ldr pc,[r0, r12, lsl #2]
 
 	ALIGN 4
 case_0_rounds
