@@ -41,11 +41,15 @@ RCC_APB2ENR	EQU		0x40021018	; APB2 Peripheral Clock Enable Register
 A			EQU 	0x19660D	; 'A' - The multiplier
 C			EQU     0x3C6EF35F	; 'C' - The increment
 
-;; Wait Times
+;; Wait Times (Custom)
 DELAY_TIME  	EQU     0x27100		; Delay Time specific to cycling LEDs at approx 1Hz
+ONE_MINUTE		EQU 	0xEF1000	; Approximately 1 min specific to displaying total game rounds
+	
+;; Other Times (Modifiable)
 PRELIM_WAIT		EQU		0x186A00	; Preliminary Wait specific to each game round
 REACT_TIME		EQU		0x3FC00		; Reaction Time for the user to respond within
-NUM_CYCLES		EQU		0x10		; Number of Cycles for each game
+;NUM_CYCLES		EQU		0xF			 ; Number of Cycles for each game (Non-Random)
+NUM_CYCLES		EQU		0x20001001	; Address with number of Cycles for each game (Random)
 WINNING_SIGNAL_TIME	EQU 0x20		; Winning Signal time
 LOSING_SIGNAL_TIME	EQU 0x20		; Losing Signal time
 
@@ -215,7 +219,7 @@ start_gameplay
 ;;; Control Normal Gameplay
 ;;; Requires: 
 ;;;		R2: User-controlled RNG seed. Will be within the range [DELAY_TIME:0].
-;;; 	NUM_CYCLES: The number of rounds per game. Should be at least 1.
+;;; 	NUM_CYCLES: The number of rounds per game. Should be at least 1. (Non-randomized)
 ;;;		REACT_TIME: The allowed reaction time for the user to respond. 
 ;;;					Works best if approx. 0x3FC00 (4*0xFFOO, or approx. 4s)
 ;;;		PRELIM_WAIT: The predefined wait time between rounds.
@@ -232,9 +236,12 @@ Normal_Gameplay PROC
 	push {lr, r0, r1, r2, r3, r4, r11}
 
 	;; Set up the current game by seeding the RNG, the number of cycles, score, and starting reaction time
-	bl Seed_RNG			; Sets the seed for RNG in r10
-	ldr r11, =NUM_CYCLES
-	mov r12, #0 		; Score starts at 0
+	bl Seed_RNG			  ; Sets the seed for RNG in r10
+	
+	;ldr r11, =NUM_CYCLES  ; Loads non-randomized rounds in r11
+	bl RNG_Rounds		  ; Randomizes the rounds (1-15) in r11
+	
+	mov r12, #0 		  ; Score starts at 0
 	ldr r3, =REACT_TIME
 	
 start_round
@@ -385,7 +392,7 @@ Seed_RNG PROC
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Linear Congruential Generator (LCG/RNG)
+;;; Linear Congruential Generator (LCG/RNG) for LEDs
 ;;; Requires:
 ;;; 	R10: The seed/start value. Must be 0 < R10 <= M.
 ;;; 		 If R10 = 0, random value would increment by C every time (decidedly not random).
@@ -425,6 +432,52 @@ RNG 	PROC
 	ENDP
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Linear Congruential Generator (LCG/RNG) for Rounds
+;;; Requires:
+;;; 	R10: The seed/start value. Must be 0 < R10 <= M.
+;;; 		 If R10 = 0, random value would increment by C every time (decidedly not random).
+;;;		A: The multiplier. Must be 0x19660D.
+;;;		C: The increment. Must be 0x3C6EF35F.
+;;;		(M: The modulus. Unused as 2^32 is greater than what can be represented in 32 bits)
+;;; Promise:
+;;; 	Returns a quality pseudo-random number (which passes tests for randomness) 
+;;; 	in R11 and stores the number in RAM at NUM_CYCLES address.
+;;; Modifies:
+;;;		Returns the Round choice in both R11 and at NUM_CYCLES address. Modifies flags.
+;;;		Subroutine does not modify any other register.
+;;; NOTES:
+;;; 1)	The constants are parameters specific to the LCG defined in
+;;; 	"Numerical Recipes" by William H. Press, Saul A. Teukolsky, William T. Vetterling and Brian P. Flannery.
+;;; 2)	The modulus M is unused due to the nature of modulus and the chosen value M. 
+;;;		For example, 3mod4 would result in 3 as 3 < 4. (2^32 > 2^31).
+;;; 3) 	The lower 4 bits chosen as to not coincide with LED choice in 1st round (chosen by RNG PROC).
+;;; 	Also since the randomization only happens once, do not need max pseudo-randomness of the upper 16 bits.
+
+	ALIGN
+RNG_Rounds 	PROC
+	push {r0, r1}
+
+	;; Using the formula X = (X0*A+C)%M, and discarding %M
+	ldr r0, =A
+	ldr r1, =C
+	mul r11, r10, r0
+	add r11, r10, r1
+	
+	;; Select lower 4 bits of pseudo-random number for rounds (4 bits can represent 0-15)	
+	ldr r0, =0x000F
+	and r11, r11, r0
+	
+	cmp r11, #0
+	addeq r11, #1		; Offset by 1 if 0 rounds (must be at least 1 round)
+	
+	ldr r0, =NUM_CYCLES ; Store a copy at NUM_CYCLES address for use during current game
+	strb r11, [r0]
+	
+	pop {r0, r1}
+	BX LR
+	ENDP
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Wait Time
 ;;; Requires:
 ;;;		R4: The time to wait. Can be any value.
@@ -432,7 +485,7 @@ RNG 	PROC
 ;;;		The routine will wait for the time it takes to count to the value in R4.
 ;;;		The value 0x1770 results in approx. 1s, using only the subs and bne instructions below.
 ;;; Modifies:
-;;;		The subroutine does not modify any registers.
+;;;		Subroutine modifies flags. The subroutine does not modify any registers.
 
 	ALIGN
 Wait 	PROC
@@ -456,11 +509,11 @@ wait_loop
 ;;; 	Will cycle a 'twinkling' LED pattern (alike arcade machines) at approx. 1Hz,
 ;;;		for WINNING_SIGNAL_TIME.
 ;;;	Modifies:
-;;;		Subroutine does not modify any registers.
+;;;		Subroutine modifies flags. Subroutine does not modify any registers.
 
 	ALIGN
 End_Success 	PROC
-	push {lr, r0, r1, r4}
+	push {lr, r0, r1, r2, r4}
 
 	ldr r0, =WINNING_SIGNAL_TIME
 signal_win
@@ -486,14 +539,19 @@ signal_win
 	b signal_win
 
 end_win
-	;; Turn off LEDs to signal the end of the game
+	;; Turn off LEDs to switch to round display
 	mov r1, #0x0
 	bl Set_LED_Output
+	
+	ldr r4, =REACT_TIME
+	bl Wait
+	
+	bl Display_Rounds ; Signal the total rounds of the game
 	
 	ldr r4, =PRELIM_WAIT
 	bl Wait
 	
-	pop {lr, r0, r1, r4}
+	pop {lr, r0, r1, r2, r4}
 	BX LR
 	ENDP
 
@@ -505,9 +563,9 @@ end_win
 ;;;		PRELIM_WAIT: The predefined wait time between rounds/games.
 ;;; Promise:
 ;;; 	Will blink an LED pattern representing the binary value of the rounds completed before failure,
-;;;		at approx. 1Hz if DELAY_TIME is 0x27100 for LOSING_SIGNAL_TIME.
+;;;		at approx. <1Hz.
 ;;;	Modifies:
-;;;		Subroutine does not modify any registers.
+;;;		Subroutine modifies flags. Subroutine does not modify any registers.
 
 	ALIGN
 End_Failure PROC
@@ -537,15 +595,60 @@ signal_fail
 	b signal_fail
 	
 end_fail
-	;; Turn off LEDs to signal the end of the game
+	;; Turn off LEDs to switch to round display
 	mov r1, #0x0
 	bl Set_LED_Output
+	
+	ldr r4, =REACT_TIME
+	bl Wait
+	
+	;; Signal the total rounds of the game
+	ldr r0, =NUM_CYCLES
+	;mov r12, r0	   ; Reuse score in r12 for total rounds
+	ldrb r12, [r0]	   ; Load copy of rounds for current game
+	bl Display_Rounds
 	
 	ldr r4, =PRELIM_WAIT
 	bl Wait
 	
 	pop {lr, r0, r1, r4}
 	BX LR
+	ENDP
+		
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Display Game Rounds
+;;; Requires:
+;;; 	R12: The number of rounds to display.
+;;; Promise:
+;;;		Will display an LED pattern representing the binary value of the rounds completed
+;;;		for approx. 1 min (0xEF1000 = 30*0xFFOO, or approx. 30s including Get_Button_Input time).
+;;; Modifies:
+;;;		Subroutine modifies flags. Subroutine does not modify any registers.
+
+Display_Rounds PROC
+	push {lr, r2}
+	
+	ldr r2, =ONE_MINUTE ; Set wait to approximately 1 min.
+	bl Select_LED_Binary
+	bl Set_LED_Output
+	
+signal_rounds
+	;; Check if user has pressed a button, if a button is pressed return to Waiting for Player
+	bl Get_Button_Input
+	cmp r0, #0x1320     ; Bit pattern when no button is pressed is 0000 1320
+	bne end_rounds
+	
+	subs r2, #1
+	bne signal_rounds
+
+end_rounds
+	;; Turn off LEDs to signal the end of the game
+	mov r1, #0x0
+	bl Set_LED_Output
+	
+	pop {lr, r2}
+	BX LR
+	
 	ENDP
 
 		
