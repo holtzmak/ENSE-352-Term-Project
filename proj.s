@@ -3,7 +3,7 @@
 ;;; Student Number: 200366225
 ;;; Course: ENSE 352-001
 ;;; Project: Term Project (Whac-A-Mole)
-;;; Program Completion Date: Dec 4, 2018
+;;; Program Completion Date: Dec 5, 2018
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Directives
@@ -151,7 +151,7 @@ GPIO_init			PROC
 
 	ALIGN
 Waiting_for_Player 	PROC
-	push {lr, r0, r1, r3, r4, r5}
+	push {lr, r0, r1, r3}
 	
 	;; The following loops cycle the LEDs back and forth by shifting the bits in the GPIOA_ODR left or right by one bit.
 	;; The direction depends on the last LED that was on. It starts with the leftmost LED on the 384 Board.
@@ -174,15 +174,7 @@ cycle_forwards
 	;; When DELAY_TIME is up, shift bit pattern at GPIOA_ODR left to turn on next forward LED
 	ldr r0, =GPIOA_ODR
 	ldr r1, [r0]
-	ldr r4, =0xFFFF0000
-	and r4, r4, r1
-	ldr r5, =0x0000E1FF
-	and r5, r5, r1
-	and r1, #0x1E00	; Bits specific to LEDs
 	lsl r1, #1
-	orr r1, #0x1E00
-	orr r4, r4, r1
-	orr r1, r1, r5
 	str r1, [r0]
 	
 	;; If the 4th LED was just on, cycle backwards
@@ -209,15 +201,7 @@ cycle_backwards
 	;; When DELAY_TIME is up, shift bit pattern at GPIOA_ODR right to turn on previous LED
 	ldr r0, =GPIOA_ODR
 	ldr r1, [r0]
-	ldr r4, =0xFFFF0000
-	and r4, r4, r1
-	ldr r5, =0x0000E1FF
-	and r5, r5, r1
-	and r1, #0x1E00	; Bits specific to LEDs
 	lsr r1, #1
-	orr r1, #0x1E00
-	orr r4, r4, r1
-	orr r1, r1, r5
 	str r1, [r0]
 	
 	;; If the 1st LED was just on, cycle forwards
@@ -232,7 +216,7 @@ start_gameplay
 	mov r1, #0x0		; Bit Pattern when no LEDs are on is 0000 0000
 	bl Set_LED_Output
 
-	pop {lr, r0, r1, r3, r4, r5}
+	pop {lr, r0, r1, r3}
 	BX LR
 	ENDP
 
